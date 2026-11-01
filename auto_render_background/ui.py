@@ -6,6 +6,7 @@ from bpy.types import Panel
 from . import scene_info
 from .job import AGUARDANDO, CANCELADO, CONCLUIDO, ERRO, RENDERIZANDO, format_duration
 from .operators import MANAGER
+from .preferences import get_prefs
 
 STATE_ICONS = {
     AGUARDANDO: "TIME",
@@ -44,6 +45,13 @@ class AutoRenderPanelMixin:
         scene = context.scene
         job = MANAGER.job
         running = MANAGER.is_running
+
+        # Velocidade (fica salva nas preferências do add-on)
+        prefs = get_prefs(context)
+        if prefs is not None:
+            row = layout.row()
+            row.enabled = not running
+            row.prop(prefs, "speed_mode", text="Velocidade")
 
         # Botão principal
         row = layout.row()

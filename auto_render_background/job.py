@@ -193,8 +193,8 @@ class RenderJob:
 
     def build_command(self):
         cmd = list(self.launcher)
-        cmd += ["-b", self.blend_path]
-        cmd += self.extra_args
+        # Flags como -y/-Y precisam vir ANTES do .blend para valerem no carregamento.
+        cmd += ["-b"] + self.extra_args + [self.blend_path]
         if self.threads > 0:
             cmd += ["-t", str(self.threads)]
         cmd += ["--python-exit-code", "1", "-P", self.worker_script, "--", self.job_path]

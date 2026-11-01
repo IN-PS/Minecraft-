@@ -141,7 +141,7 @@ class AddonStubTests(unittest.TestCase):
         # O operador usa o fake_blender no lugar do executável real.
         self.prefs = types.SimpleNamespace(
             blender_path="", snapshot_location="BLEND_DIR", keep_running_on_exit=False,
-            device_mode="SCENE", threads=0, low_priority=True, cancel_grace=5.0)
+            device_mode="SCENE", threads=0, speed_mode="RAPIDO", cancel_grace=5.0)
 
     def tearDown(self):
         ops = sys.modules.get("auto_render_background.operators")

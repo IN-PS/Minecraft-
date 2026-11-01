@@ -10,6 +10,7 @@ import bpy
 ENGINES = {
     "CYCLES": "Cycles",
     "BLENDER_EEVEE": "Eevee",
+    "BLENDER_EEVEE_NEXT": "Eevee",  # Blender 4.2-4.x
     "BLENDER_WORKBENCH": "Workbench",
 }
 
@@ -116,8 +117,10 @@ def validate_scene(scene):
         errors.append("Salve o projeto (.blend) antes de renderizar.")
     if scene.frame_end < scene.frame_start:
         errors.append("Intervalo de frames inválido.")
-    uses_sequencer = bool(render.use_sequencer and scene.sequence_editor and
-                          len(scene.sequence_editor.sequences_all) > 0)
+    editor = scene.sequence_editor
+    strips = (getattr(editor, "sequences_all", None) or getattr(editor, "strips_all", None)
+              if editor else None)
+    uses_sequencer = bool(render.use_sequencer and strips and len(strips) > 0)
     if scene.camera is None and not uses_sequencer:
         errors.append("A cena não possui câmera ativa.")
     if render.engine not in ENGINES:

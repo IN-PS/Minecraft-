@@ -64,7 +64,7 @@ class RenderJobTests(unittest.TestCase):
             "scene": scene, "frame_start": frames[0], "frame_end": frames[1],
             "frame_step": frames[2], "output_path": os.path.join(self.out_dir, "frame_####"),
             "output_dir": self.out_dir, "overwrite": overwrite, "device_mode": "SCENE",
-            "stop_if_parent_dies": True,
+            "stop_if_parent_dies": True, "speed_mode": "EQUILIBRADO",
         }
         config.update(extra_config or {})
         j = jobmod.RenderJob(FAKE_BLENDER, blend, WORKER, config,
@@ -215,6 +215,62 @@ class RenderJobTests(unittest.TestCase):
         with open(j.log_path, encoding="utf-8") as fh:
             self.assertIn("Dispositivo forçado: CPU", fh.read())
 
+    def log_text(self, j):
+        with open(j.log_path, encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_modo_rapido_usa_gpu_e_dados_persistentes(self):
+        j = self.make_job(device="CPU", gpu_available=True,
+                          extra_config={"speed_mode": "RAPIDO"})
+        j.start()
+        wait(j)
+        self.assertEqual(j.state, jobmod.CONCLUIDO, j.message)
+        log = self.log_text(j)
+        self.assertIn("usando a GPU nesta renderização", log)
+        self.assertIn("dados persistentes", j.worker_status["speed"])
+        self.assertIn("amostragem adaptativa", j.worker_status["speed"])
+        self.assertFalse(any(x.startswith("amostras") for x in j.worker_status["speed"]),
+                         "o modo Rápido não pode reduzir a qualidade")
+
+    def test_modo_rapido_ativa_gpu_desligada_nas_preferencias(self):
+        j = self.make_job(device="CPU", gpu_available="present",
+                          extra_config={"speed_mode": "RAPIDO"})
+        j.start()
+        wait(j)
+        self.assertEqual(j.state, jobmod.CONCLUIDO, j.message)
+        self.assertIn("GPU ativada automaticamente: CUDA", self.log_text(j))
+        self.assertIn("Fake GPU (CUDA)", j.worker_status["devices"])
+
+    def test_modo_rapido_sem_gpu_continua_na_cpu(self):
+        j = self.make_job(device="CPU", gpu_available=False,
+                          extra_config={"speed_mode": "RAPIDO"})
+        j.start()
+        wait(j)
+        self.assertEqual(j.state, jobmod.CONCLUIDO, j.message)
+        self.assertNotIn("usando a GPU", self.log_text(j))
+
+    def test_modo_rascunho_reduz_amostras(self):
+        j = self.make_job(extra_config={"speed_mode": "RASCUNHO"})
+        j.start()
+        wait(j)
+        self.assertEqual(j.state, jobmod.CONCLUIDO, j.message)
+        speed = j.worker_status["speed"]
+        for item in ("amostras<=64", "denoise", "rebatimentos<=6", "limiar de ruído 0.05"):
+            self.assertIn(item, speed)
+
+    def test_modo_rascunho_eevee(self):
+        j = self.make_job(engine="BLENDER_EEVEE", extra_config={"speed_mode": "RASCUNHO"})
+        j.start()
+        wait(j)
+        self.assertIn("amostras Eevee<=16", j.worker_status["speed"])
+
+    def test_modo_equilibrado_nao_altera_a_cena(self):
+        j = self.make_job(device="CPU", gpu_available=True)
+        j.start()
+        wait(j)
+        self.assertEqual(j.worker_status["speed"], [])
+        self.assertNotIn("usando a GPU", self.log_text(j))
+
     def test_para_se_o_blender_principal_morrer(self):
         dead = subprocess.Popen([sys.executable, "-c", "pass"])
         dead.wait()
@@ -241,8 +297,8 @@ class RenderJobTests(unittest.TestCase):
         j = self.make_job(threads=3, extra_args=["-y"])
         cmd = j.build_command()
         self.assertEqual(cmd[:2], FAKE_BLENDER)
-        self.assertEqual(cmd[2:4], ["-b", j.blend_path])
-        self.assertIn("-y", cmd)
+        # -y precisa vir antes do .blend para valer no carregamento do arquivo.
+        self.assertEqual(cmd[2:5], ["-b", "-y", j.blend_path])
         self.assertEqual(cmd[cmd.index("-t") + 1], "3")
         # --python-exit-code precisa vir antes de -P; o job.json vem após '--'.
         self.assertLess(cmd.index("--python-exit-code"), cmd.index("-P"))

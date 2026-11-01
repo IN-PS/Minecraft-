@@ -4,14 +4,27 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, St
 
 ADDON_ID = __package__
 
+SPEED_MODES = (
+    ("RAPIDO", "Rápido",
+     "Mesma qualidade: usa a GPU automaticamente, reaproveita dados entre frames, "
+     "amostragem adaptativa e prioridade normal do processo"),
+    ("RASCUNHO", "Rascunho (muito rápido)",
+     "Tudo do modo Rápido + menos amostras com denoise e menos rebatimentos de luz. "
+     "Perde um pouco de qualidade"),
+    ("EQUILIBRADO", "Equilibrado",
+     "Renderiza exatamente como a cena está, com prioridade baixa para a reprodução "
+     "da timeline ficar mais fluida"),
+)
+
 
 class AUTORENDER_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = ADDON_ID
 
-    low_priority: BoolProperty(
-        name="Prioridade baixa para o processo de renderização",
-        description="Dá prioridade à interface do Blender principal (recomendado para manter a reprodução fluida)",
-        default=True,
+    speed_mode: EnumProperty(
+        name="Velocidade",
+        description="Otimizações aplicadas somente à cópia renderizada (o projeto original não muda)",
+        items=SPEED_MODES,
+        default="RAPIDO",
     )
     threads: IntProperty(
         name="Threads de CPU",
@@ -56,7 +69,7 @@ class AUTORENDER_AddonPreferences(bpy.types.AddonPreferences):
     def draw(self, context):
         layout = self.layout
         col = layout.column()
-        col.prop(self, "low_priority")
+        col.prop(self, "speed_mode")
         col.prop(self, "threads")
         col.prop(self, "device_mode")
         col.prop(self, "snapshot_location")

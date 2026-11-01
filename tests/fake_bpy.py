@@ -40,6 +40,7 @@ class _Render:
         self.resolution_y = 1080
         self.resolution_percentage = 100
         self.image_settings = _ImageSettings()
+        self.use_persistent_data = False
 
     def frame_path(self, frame=0):
         path = self.filepath
@@ -54,6 +55,26 @@ class _Render:
 class _Cycles:
     def __init__(self, device):
         self.device = device
+        self.samples = 4096
+        self.use_adaptive_sampling = False
+        self.adaptive_threshold = 0.01
+        self.use_denoising = False
+        self.max_bounces = 12
+        self.diffuse_bounces = 4
+        self.glossy_bounces = 4
+        self.transmission_bounces = 12
+        self.volume_bounces = 0
+        self.transparent_max_bounces = 8
+
+
+class _Eevee:
+    taa_render_samples = 64
+
+
+class _ViewLayer:
+    def __init__(self):
+        self.name = "ViewLayer"
+        self.cycles = type("VLCycles", (), {"use_denoising": False})()
 
 
 class _Scene:
@@ -65,6 +86,8 @@ class _Scene:
         self.frame_current = self.frame_start
         self.render = _Render(data.get("engine", "CYCLES"))
         self.cycles = _Cycles(data.get("device", "CPU"))
+        self.eevee = _Eevee()
+        self.view_layers = [_ViewLayer()]
 
 
 class _Scenes(dict):
@@ -84,12 +107,24 @@ class _Device:
 
 
 class _CyclesPrefs:
+    """gpu: "none" (sem placa), "configured" (ativa) ou "present" (existe, mas desligada)."""
+
     def __init__(self, gpu):
-        self.compute_device_type = "CUDA" if gpu else "NONE"
+        self._type = "CUDA" if gpu == "configured" else "NONE"
         self.devices = [_Device("CPU", "CPU", True)]
-        if gpu:
-            self.devices.append(_Device("Fake GPU", "CUDA", True))
+        if gpu in ("configured", "present"):
+            self.devices.append(_Device("Fake GPU", "CUDA", gpu == "configured"))
         self.refreshed = False
+
+    @property
+    def compute_device_type(self):
+        return self._type
+
+    @compute_device_type.setter
+    def compute_device_type(self, value):
+        if value not in ("NONE", "CUDA", "OPTIX", "HIP", "METAL", "ONEAPI"):
+            raise TypeError("enum \"%s\" not found" % value)
+        self._type = value
 
     def refresh_devices(self):
         self.refreshed = True
@@ -101,6 +136,8 @@ class _Addon:
 
 
 class _Preferences:
+    use_preferences_save = True
+
     def __init__(self, gpu):
         self.addons = {"cycles": _Addon(_CyclesPrefs(gpu))}
 
@@ -174,5 +211,8 @@ def load_blend(path):
     data.filepath = path
     for name, scene_data in blend["scenes"].items():
         data.scenes[name] = _Scene(name, scene_data)
-    context = _Context(blend.get("gpu_available", False))
+    gpu = blend.get("gpu_available", False)
+    if gpu is True:
+        gpu = "configured"
+    context = _Context(gpu or "none")
     sys.modules[__name__].context = context

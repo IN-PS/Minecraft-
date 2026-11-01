@@ -158,6 +158,7 @@ class AUTORENDER_OT_renderizar(Operator):
             snapshot = scene_info.save_snapshot(
                 scene_info.snapshot_path(prefs.snapshot_location if prefs else "BLEND_DIR"))
             keep = bool(prefs and prefs.keep_running_on_exit)
+            speed_mode = prefs.speed_mode if prefs else "RAPIDO"
             config = {
                 "scene": scene.name,
                 "frame_start": scene.frame_start,
@@ -168,6 +169,7 @@ class AUTORENDER_OT_renderizar(Operator):
                 "is_movie": info["is_movie"],
                 "overwrite": bool(self.sobrescrever),
                 "device_mode": prefs.device_mode if prefs else "SCENE",
+                "speed_mode": speed_mode,
                 "keep_running_on_exit": keep,
                 "stop_if_parent_dies": not keep,
                 "original_blend": bpy.data.filepath,
@@ -178,7 +180,7 @@ class AUTORENDER_OT_renderizar(Operator):
                 worker_script=WORKER_SCRIPT,
                 config=config,
                 threads=prefs.threads if prefs else 0,
-                low_priority=prefs.low_priority if prefs else True,
+                low_priority=speed_mode == "EQUILIBRADO",
                 cancel_grace=prefs.cancel_grace if prefs else 10.0,
                 extra_args=scene_info.autoexec_args(),
                 snapshot_to_delete=snapshot,

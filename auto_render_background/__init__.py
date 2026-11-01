@@ -4,7 +4,7 @@
 bl_info = {
     "name": "AutoRender Background",
     "author": "AutoRender Background",
-    "version": (1, 0, 0),
+    "version": (1, 1, 0),
     "blender": (3, 6, 0),
     "location": "Viewport 3D > Barra lateral (N) > Auto Render",
     "description": "Renderiza a animação em segundo plano com um clique, "

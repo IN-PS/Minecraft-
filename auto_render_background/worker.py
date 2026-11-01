@@ -49,6 +49,7 @@ def write_status(state, message="", **extra):
         "current_frame": STATE["current_frame"],
         "devices": STATE["devices"],
         "warnings": STATE["warnings"],
+        "speed": STATE.get("speed", []),
         "pid": os.getpid(),
         "time": time.time(),
     }
@@ -144,20 +145,11 @@ def on_render_cancel(scene, *_args):
 
 
 # -------------------------------------------------------------------- setup
-def configure_cycles_device(scene, cfg):
-    """Detecta GPUs disponíveis neste processo e aplica o modo escolhido."""
-    if scene.render.engine != "CYCLES":
-        return
-    mode = cfg.get("device_mode", "SCENE")
-    if mode == "CPU":
-        scene.cycles.device = "CPU"
-        log("Dispositivo forçado: CPU")
-        return
+# Ordem de preferência quando o add-on precisa escolher a GPU sozinho.
+GPU_PRIORITY = ("OPTIX", "CUDA", "HIP", "METAL", "ONEAPI")
 
-    addon = bpy.context.preferences.addons.get("cycles")
-    if addon is None:
-        return
-    prefs = addon.preferences
+
+def _refresh_devices(prefs):
     try:
         if hasattr(prefs, "refresh_devices"):
             prefs.refresh_devices()
@@ -166,9 +158,57 @@ def configure_cycles_device(scene, cfg):
     except Exception as exc:  # driver ausente, etc.
         STATE["warnings"].append("Falha ao detectar dispositivos: %s" % exc)
 
+
+def _active_gpus(prefs, compute_type):
+    return [d for d in prefs.devices if d.use and d.type != "CPU" and d.type == compute_type]
+
+
+def _enable_best_gpu(prefs):
+    """Ativa a melhor GPU disponível SOMENTE neste processo (preferências não são salvas)."""
+    available = {d.type for d in prefs.devices if d.type != "CPU"}
+    for device_type in GPU_PRIORITY:
+        if device_type not in available:
+            continue
+        try:
+            prefs.compute_device_type = device_type
+        except (TypeError, ValueError):
+            continue
+        _refresh_devices(prefs)
+        for d in prefs.devices:
+            if d.type == device_type:
+                d.use = True
+        if _active_gpus(prefs, device_type):
+            log("GPU ativada automaticamente: %s" % device_type)
+            return device_type
+    return None
+
+
+def configure_cycles_device(scene, cfg):
+    """Detecta GPUs disponíveis neste processo e aplica o modo escolhido."""
+    if scene.render.engine != "CYCLES":
+        return
+    if cfg.get("device_mode", "SCENE") == "CPU":
+        scene.cycles.device = "CPU"
+        log("Dispositivo forçado: CPU")
+        return
+
+    addon = bpy.context.preferences.addons.get("cycles")
+    if addon is None:
+        return
+    prefs = addon.preferences
+    _refresh_devices(prefs)
+
     compute_type = getattr(prefs, "compute_device_type", "NONE") or "NONE"
-    gpus = [d for d in prefs.devices if d.use and d.type != "CPU" and d.type == compute_type]
-    STATE["devices"] = ["%s (%s)" % (d.name, d.type) for d in prefs.devices if d.use]
+    fast = cfg.get("speed_mode") in ("RAPIDO", "RASCUNHO")
+    if fast and not _active_gpus(prefs, compute_type):
+        compute_type = _enable_best_gpu(prefs) or compute_type
+    gpus = _active_gpus(prefs, compute_type)
+    if fast and gpus and scene.cycles.device != "GPU":
+        scene.cycles.device = "GPU"
+        log("Velocidade: cena configurada para CPU, usando a GPU nesta renderização.")
+
+    STATE["devices"] = ["%s (%s)" % (d.name, d.type) for d in prefs.devices
+                        if d.use and (d.type == compute_type or d.type == "CPU")]
     log("Tipo de computação: %s | Dispositivos ativos: %s" % (
         compute_type, ", ".join(STATE["devices"]) or "nenhum"))
 
@@ -177,6 +217,58 @@ def configure_cycles_device(scene, cfg):
         msg = "Nenhuma GPU ativa no processo secundário; usando CPU."
         STATE["warnings"].append(msg)
         log(msg)
+
+
+def _set(obj, attr, value, applied, label):
+    """Altera uma configuração se ela existir nesta versão do Blender."""
+    if obj is None or not hasattr(obj, attr):
+        return
+    try:
+        if getattr(obj, attr) != value:
+            setattr(obj, attr, value)
+            applied.append(label)
+    except (TypeError, ValueError, AttributeError):
+        pass
+
+
+def _cap(obj, attr, maximum, applied, label):
+    if obj is not None and hasattr(obj, attr) and getattr(obj, attr) > maximum:
+        _set(obj, attr, maximum, applied, "%s<=%s" % (label, maximum))
+
+
+def apply_speed(scene, cfg):
+    """Otimizações de velocidade aplicadas apenas à cópia que está sendo renderizada."""
+    mode = cfg.get("speed_mode", "EQUILIBRADO")
+    if mode not in ("RAPIDO", "RASCUNHO"):
+        return []
+    applied = []
+    render = scene.render
+    engine = render.engine
+    # Reaproveita BVH/texturas entre frames (Cycles): grande ganho em animações.
+    _set(render, "use_persistent_data", True, applied, "dados persistentes")
+
+    if engine == "CYCLES":
+        cycles = scene.cycles
+        _set(cycles, "use_adaptive_sampling", True, applied, "amostragem adaptativa")
+        if mode == "RASCUNHO":
+            _cap(cycles, "samples", 64, applied, "amostras")
+            if hasattr(cycles, "adaptive_threshold") and cycles.adaptive_threshold < 0.05:
+                _set(cycles, "adaptive_threshold", 0.05, applied, "limiar de ruído 0.05")
+            _set(cycles, "use_denoising", True, applied, "denoise")
+            for layer in scene.view_layers:
+                _set(getattr(layer, "cycles", None), "use_denoising", True, applied,
+                     "denoise (%s)" % layer.name)
+            _cap(cycles, "max_bounces", 6, applied, "rebatimentos")
+            _cap(cycles, "diffuse_bounces", 2, applied, "difusos")
+            _cap(cycles, "glossy_bounces", 2, applied, "brilho")
+            _cap(cycles, "transmission_bounces", 6, applied, "transmissão")
+            _cap(cycles, "volume_bounces", 0, applied, "volume")
+            _cap(cycles, "transparent_max_bounces", 8, applied, "transparência")
+    elif "EEVEE" in engine and mode == "RASCUNHO":
+        _cap(scene.eevee, "taa_render_samples", 16, applied, "amostras Eevee")
+
+    log("Velocidade (%s): %s" % (mode, ", ".join(applied) or "nada a alterar"))
+    return applied
 
 
 def apply_config(cfg):
@@ -194,7 +286,13 @@ def apply_config(cfg):
     # Sem autorização explícita, nunca sobrescreve arquivos existentes.
     render.use_overwrite = bool(cfg.get("overwrite", False))
 
+    # Nada alterado aqui deve ir para as Preferências do usuário.
+    try:
+        bpy.context.preferences.use_preferences_save = False
+    except AttributeError:
+        pass
     configure_cycles_device(scene, cfg)
+    STATE["speed"] = apply_speed(scene, cfg)
 
     STATE["frames_total"] = len(range(scene.frame_start, scene.frame_end + 1, scene.frame_step))
     log("Cena: %s | Motor: %s | Frames: %d-%d (passo %d) | %dx%d %d%% | Saída: %s" % (

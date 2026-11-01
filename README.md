@@ -59,13 +59,27 @@ Instalação manual: copie a pasta `auto_render_background` para
 
 | Opção | Padrão | Efeito |
 |---|---|---|
-| Prioridade baixa | ligado | `nice 10` (Linux/macOS) ou `BELOW_NORMAL` (Windows) no processo de renderização |
+| Velocidade | Rápido | Ver "Modos de velocidade" abaixo (também aparece no painel) |
 | Threads de CPU | 0 (auto) | Passa `-t N`; deixar núcleos livres ajuda a reprodução |
 | Dispositivo (Cycles) | Igual à cena | "Forçar CPU" deixa a GPU para a viewport |
 | Cópia do projeto | Pasta do .blend | Onde fica a cópia temporária usada pelo processo |
 | Espera para cancelar | 10 s | Tempo aguardando o fim do frame antes de encerrar à força |
 | Continuar ao fechar o Blender | desligado | Se desligado, o render para quando o Blender principal fecha |
 | Executável do Blender | vazio | Vazio = mesmo executável da sessão (`bpy.app.binary_path`) |
+
+### Modos de velocidade
+
+As otimizações são aplicadas **somente na cópia** que está sendo renderizada; o
+projeto original não é alterado.
+
+| Modo | O que faz | Qualidade |
+|---|---|---|
+| **Rápido** (padrão) | Usa a GPU automaticamente (mesmo que a cena esteja em CPU ou a GPU esteja desligada nas Preferências — escolhe OptiX > CUDA > HIP > Metal > oneAPI), ativa dados persistentes (reaproveita BVH/texturas entre frames) e amostragem adaptativa, prioridade normal do processo | Igual |
+| **Rascunho** | Tudo do Rápido + no máximo 64 amostras com denoise, limiar de ruído 0.05, menos rebatimentos de luz (Cycles) / no máximo 16 amostras (Eevee) | Menor |
+| **Equilibrado** | Renderiza a cena exatamente como está, com prioridade baixa | Igual, mais lento; reprodução da timeline mais fluida |
+
+Dados persistentes usam mais memória. Se a cena não couber na RAM/VRAM, use
+o modo Equilibrado. O que foi aplicado aparece no log (`Velocidade (...)`).
 
 ## Como funciona
 
